@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>">
 <title>报名助手 - 免费报名小程序</title>
-<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.js"></script>
+<!-- QR code via QuickChart API, no JS library needed -->
 <style>
 /* ========== Reset & Variables ========== */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -171,7 +171,7 @@ main { flex: 1; padding: 16px; overflow-y: auto; }
   box-shadow: var(--shadow-md);
   margin-bottom: 16px;
 }
-.qr-wrapper canvas, .qr-wrapper img { display: block !important; }
+.qr-wrapper img { display: block; margin: 0 auto; }
 .qr-url {
   font-size: 13px;
   color: var(--gray-500);
@@ -743,11 +743,12 @@ function renderEventDetail(eventId) {
 
   setHeader(event.title, true, '⚙️', () => navigate('create/' + event.id));
 
-  // 把二维码内联进来，只渲染一次
+  // QR码图片URL
+  var qrImgSrc = 'https://quickchart.io/qr?text=' + encodeURIComponent(regUrl) + '&size=280';
   var qrHtml = `
     <div class="qr-section">
-      <div class="qr-wrapper" id="qrcodeContainer">
-        <div id="qrcode"></div>
+      <div class="qr-wrapper">
+        <img src="${qrImgSrc}" alt="报名二维码" style="display:block;width:220px;height:220px;" onerror="this.outerHTML='<p style=color:red>二维码加载失败</p>'">
       </div>
       <p style="font-size:14px;color:var(--gray-600);margin-bottom:8px;">
         📱 用微信或其他扫码软件扫描二维码报名
@@ -799,22 +800,6 @@ function renderEventDetail(eventId) {
   `;
 
   setMain(html);
-
-  // 渲染二维码
-  var qrContainer = document.getElementById('qrcode');
-  if (qrContainer && qrContainer.children.length === 0) {
-    try {
-      var qrSize = regUrl.length > 500 ? 280 : 220;
-      new QRCode(qrContainer, {
-        text: regUrl,
-        width: qrSize,
-        height: qrSize,
-        colorDark: '#1f2937',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.L
-      });
-    } catch(err) { /* QR failed silently */ }
-  }
 }
 
 function switchTabContent(tab, eventId, btnEl) {
@@ -830,11 +815,12 @@ function switchTabContent(tab, eventId, btnEl) {
     if (!ev) return;
     var encoded = encodeEventForUrl(ev);
     var regUrl = location.origin + location.pathname + '#register/' + eventId + '/' + encoded;
+    var qrImgSrc = 'https://quickchart.io/qr?text=' + encodeURIComponent(regUrl) + '&size=280';
 
     content.innerHTML = `
       <div class="qr-section">
-        <div class="qr-wrapper" id="qrcodeContainer">
-          <div id="qrcode"></div>
+        <div class="qr-wrapper">
+          <img src="${qrImgSrc}" alt="报名二维码" style="display:block;width:220px;height:220px;" onerror="this.outerHTML='<p style=color:red>二维码加载失败</p>'">
         </div>
         <p style="font-size:14px;color:var(--gray-600);margin-bottom:8px;">
           📱 用微信或其他扫码软件扫描二维码报名
@@ -858,13 +844,6 @@ function switchTabContent(tab, eventId, btnEl) {
         </div>
       </div>
     `;
-    var qrEl = document.getElementById('qrcode');
-    if (qrEl && qrEl.children.length === 0) {
-      try {
-        var qrSize = regUrl.length > 500 ? 280 : 220;
-        new QRCode(qrEl, { text: regUrl, width: qrSize, height: qrSize, colorDark: '#1f2937', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.L });
-      } catch(err) {}
-    }
   } else {
     renderListTabContent(eventId, content);
   }
