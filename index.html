@@ -379,84 +379,79 @@ function deleteRegistration(eventId, regId) {
   }
 }
 
-function generateId() {
-  // 6位短ID用于二维码
-  var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-  var id = '';
-  for (var i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
-  return id;
-}
+function generateId() { return 'id_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6); }
 
-/* ========== GitHub 同步（跨设备共享活动数据） ========== */
-var GITHUB_TOKEN_KEY = 'gh_sync_token';
-var GITHUB_REPO = 'linhuiyin/registration-app';
-var GITHUB_DATA_PATH = 'data';
+/* ========== 活动数据URL编解码（跨设备共享） ========== */
+// 类型缩写映射（减少URL体积）
+var TYPE_MAP = { text:'t', tel:'p', email:'e', number:'n', textarea:'a', select:'s' };
+var TYPE_REV = { t:'text', p:'tel', e:'email', n:'number', a:'textarea', s:'select' };
 
-function getGithubToken() {
-  return localStorage.getItem(GITHUB_TOKEN_KEY) || '';
-}
-
-function setGithubToken(token) {
-  localStorage.setItem(GITHUB_TOKEN_KEY, token);
-}
-
-function syncEventToGithub(event) {
-  var token = getGithubToken();
-  if (!token) return; // 没配置token就跳过
-
-  var payload = {
-    title: event.title,
-    description: event.description || '',
-    fields: event.fields,
-    deadline: event.deadline || null,
-    maxRegs: event.maxRegs || null,
-    status: event.status,
-    createdAt: event.createdAt,
-    updatedAt: event.updatedAt || Date.now(),
+function encodeEventForUrl(event) {
+  // 用数组格式压缩字段: [label, typeChar, required]
+  var fields = event.fields.map(function(f) {
+    return [f.label, TYPE_MAP[f.type] || 't', f.required ? 1 : 0];
+  });
+  var config = {
+    id: event.id,
+    t: event.title,
+    d: event.description || '',
+    f: fields,
+    dl: event.deadline || '',
+    mx: event.maxRegs || 0,
+    st: event.status,
+    ca: event.createdAt,
   };
-
-  var json = JSON.stringify(payload);
-  var base64Content = btoa(unescape(encodeURIComponent(json)));
-
-  // 先检查文件是否存在
-  var checkUrl = 'https://api.github.com/repos/' + GITHUB_REPO + '/contents/' + GITHUB_DATA_PATH + '/' + event.id + '.json';
-
-  fetch(checkUrl, { headers: { Authorization: 'token ' + token } })
-    .then(function(r) { return r.ok ? r.json() : null; })
-    .then(function(existing) {
-      var body = {
-        message: 'Update event: ' + event.title,
-        content: base64Content,
-        branch: 'master'
-      };
-      if (existing && existing.sha) body.sha = existing.sha;
-
-      return fetch(checkUrl, {
-        method: 'PUT',
-        headers: {
-          Authorization: 'token ' + token,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-      });
-    })
-    .then(function(r) {
-      if (r && r.ok) console.log('Event synced to GitHub: ' + event.id);
-    })
-    .catch(function(err) {
-      console.warn('GitHub sync failed:', err);
-    });
+  try {
+    var json = JSON.stringify(config);
+    var bytes = [];
+    for (var i = 0; i < json.length; i++) {
+      var c = json.charCodeAt(i);
+      if (c < 128) bytes.push(c);
+      else if (c < 2048) { bytes.push(192 | c >> 6); bytes.push(128 | c & 63); }
+      else { bytes.push(224 | c >> 12); bytes.push(128 | c >> 6 & 63); bytes.push(128 | c & 63); }
+    }
+    var binary = '';
+    for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  } catch(e) { return ''; }
 }
 
-function loadRemoteEvent(eventId) {
-  var url = 'https://raw.githubusercontent.com/' + GITHUB_REPO + '/master/' + GITHUB_DATA_PATH + '/' + eventId + '.json';
-  return fetch(url)
-    .then(function(r) { if (!r.ok) throw new Error('not found'); return r.json(); })
-    .then(function(data) {
-      data.id = eventId;
-      return data;
-    })
-    .catch(function() { return null; });
+function decodeEventFromUrl(encoded) {
+  try {
+    var b64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    var binary = atob(b64);
+    var bytes = [];
+    for (var i = 0; i < binary.length; i++) bytes.push(binary.charCodeAt(i));
+    var json = '';
+    var j = 0;
+    while (j < bytes.length) {
+      var b = bytes[j++];
+      if (b < 128) json += String.fromCharCode(b);
+      else if (b < 224) { json += String.fromCharCode(((b & 31) << 6) | (bytes[j++] & 63)); }
+      else { json += String.fromCharCode(((b & 15) << 12) | ((bytes[j++] & 63) << 6) | (bytes[j++] & 63)); }
+    }
+    var cfg = JSON.parse(json);
+    // 还原字段数组: [label, typeChar, required] → {key, label, type, required}
+    var fields = (cfg.f || []).map(function(f, i) {
+      return {
+        key: 'field_' + i,
+        label: f[0],
+        type: TYPE_REV[f[1]] || 'text',
+        required: !!f[2]
+      };
+    });
+    return {
+      id: cfg.id,
+      title: cfg.t,
+      description: cfg.d,
+      fields: fields,
+      deadline: cfg.dl || null,
+      maxRegs: cfg.mx || null,
+      status: cfg.st,
+      createdAt: cfg.ca,
+    };
+  } catch(e) { return null; }
 }
 
 /* ========== Toast ========== */
@@ -503,7 +498,7 @@ function render() {
     case 'home': renderHome(); break;
     case 'create': renderCreateForm(route.params[0]); break;
     case 'event': renderEventDetail(route.params[0]); break;
-    case 'register': renderRegistrationForm(route.params[0]); break;
+    case 'register': renderRegistrationForm(route.params[0], route.params[1]); break;
     case 'success': renderSuccessPage(); break;
     default: renderHome();
   }
@@ -552,11 +547,11 @@ function renderHome() {
     return;
   }
 
-  var html = '';
-  events.forEach(function(event) {
-    var regs = getRegistrations(event.id);
-    var isActive = !event.deadline || new Date(event.deadline) > new Date();
-    var isOpen = event.status === 'open';
+  let html = '';
+  events.forEach(event => {
+    const regs = getRegistrations(event.id);
+    const isActive = !event.deadline || new Date(event.deadline) > new Date();
+    const isOpen = event.status === 'open';
     html += `
       <div class="card" onclick="navigate('event/${event.id}')" style="cursor:pointer;">
         <div class="card-header">
@@ -574,25 +569,6 @@ function renderHome() {
       </div>
     `;
   });
-
-  // GitHub同步设置
-  var hasToken = !!getGithubToken();
-  html += `
-    <div class="card" style="background:var(--gray-50);border:1px dashed var(--gray-300);">
-      <div style="display:flex;align-items:center;justify-content:space-between;">
-        <div>
-          <div style="font-size:14px;font-weight:600;">🔗 GitHub 同步</div>
-          <div style="font-size:12px;color:var(--gray-500);margin-top:4px;">
-            ${hasToken ? '✅ 已配置 - 活动自动同步' : '⚠️ 未配置 - 扫码仅本机可用'}
-          </div>
-        </div>
-        <button class="btn ${hasToken ? 'btn-outline' : 'btn-primary'} btn-sm" onclick="showTokenSettings()">
-          ${hasToken ? '修改' : '设置'}
-        </button>
-      </div>
-      ${hasToken ? '' : '<p style="font-size:12px;color:var(--gray-400);margin-top:8px;">设置后可跨设备扫码报名，二维码也会更短</p>'}
-    </div>
-  `;
 
   setMain(html);
 }
@@ -745,7 +721,6 @@ function submitEvent(e, editId) {
   };
 
   saveEvent(event);
-  syncEventToGithub(event);
   showToast(editId ? '活动已更新！' : '活动创建成功！🎉', 'success');
   navigate('event/' + event.id);
 }
@@ -763,7 +738,8 @@ function renderEventDetail(eventId) {
 
   const regs = getRegistrations(event.id);
   const isActive = !event.deadline || new Date(event.deadline) > new Date();
-  const regUrl = location.origin + location.pathname + '#register/' + event.id;
+  const encoded = encodeEventForUrl(event);
+  const regUrl = location.origin + location.pathname + '#register/' + event.id + '/' + encoded;
 
   setHeader(event.title, true, '⚙️', () => navigate('create/' + event.id));
 
@@ -784,8 +760,8 @@ function renderEventDetail(eventId) {
     </div>
 
     <div class="tab-bar" id="detailTabs">
-      <button class="active" onclick="switchDetailTab('qr', '${event.id}')">📱 报名码</button>
-      <button onclick="switchDetailTab('list', '${event.id}')">👥 报名列表</button>
+      <button class="active" onclick="switchDetailTab('qr', '${event.id}', this)">📱 报名码</button>
+      <button onclick="switchDetailTab('list', '${event.id}', this)">👥 报名列表</button>
     </div>
 
     <div id="detailContent"></div>
@@ -795,23 +771,32 @@ function renderEventDetail(eventId) {
   renderQRTab(event, regUrl);
 }
 
-function switchDetailTab(tab, eventId) {
-  document.querySelectorAll('#detailTabs button').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+function switchDetailTab(tab, eventId, btnEl) {
+  document.querySelectorAll('#detailTabs button').forEach(function(b) { b.classList.remove('active'); });
+  if (btnEl) btnEl.classList.add('active');
 
   if (tab === 'qr') {
     const data = loadData();
     const event = data.events.find(e => e.id === eventId);
-    const regUrl = location.origin + location.pathname + '#register/' + eventId;
+    if (!event) return;
+    const encoded = encodeEventForUrl(event);
+    const regUrl = location.origin + location.pathname + '#register/' + eventId + '/' + encoded;
     renderQRTab(event, regUrl);
   } else {
     renderListTab(eventId);
   }
 }
 
+var qrGenTimer = null;
+
 function renderQRTab(event, regUrl) {
-  const content = document.getElementById('detailContent');
-  let html = `
+  var content = document.getElementById('detailContent');
+  if (!content) return;
+
+  // 取消之前的QR生成，防止重复
+  if (qrGenTimer) { clearTimeout(qrGenTimer); qrGenTimer = null; }
+
+  var html = `
     <div class="qr-section">
       <div class="qr-wrapper" id="qrcodeContainer">
         <div id="qrcode"></div>
@@ -826,9 +811,9 @@ function renderQRTab(event, regUrl) {
       </div>
       <div style="margin-top:16px;font-size:13px;color:var(--gray-500);">
         ${event.status === 'open'
-          ? (event.deadline ? `⏰ 报名截止：${formatDate(event.deadline)}` : '🟢 活动进行中，接受报名')
+          ? (event.deadline ? '⏰ 报名截止：' + formatDate(event.deadline) : '🟢 活动进行中，接受报名')
           : '🔴 活动已关闭，不接受新报名'}
-        ${event.maxRegs ? ` · 限额 ${event.maxRegs} 人` : ''}
+        ${event.maxRegs ? ' · 限额 ' + event.maxRegs + ' 人' : ''}
       </div>
       <div class="btn-group" style="margin-top:20px;justify-content:center;">
         <button class="btn btn-outline btn-sm" onclick="toggleEventStatus('${event.id}')">
@@ -840,13 +825,13 @@ function renderQRTab(event, regUrl) {
   `;
   content.innerHTML = html;
 
-  // Generate QR code
-  setTimeout(() => {
-    const qrContainer = document.getElementById('qrcode');
+  // 生成二维码
+  qrGenTimer = setTimeout(function() {
+    qrGenTimer = null;
+    var qrContainer = document.getElementById('qrcode');
     if (!qrContainer) return;
     qrContainer.innerHTML = '';
     try {
-      // 根据数据长度自适应二维码尺寸
       var qrSize = regUrl.length > 500 ? 280 : 220;
       new QRCode(qrContainer, {
         text: regUrl,
@@ -856,11 +841,10 @@ function renderQRTab(event, regUrl) {
         colorLight: '#ffffff',
         correctLevel: QRCode.CorrectLevel.L
       });
-    } catch (err) {
-      console.error('QR生成失败:', err);
+    } catch(err) {
       qrContainer.innerHTML = '<p style=\"color:red;font-size:13px;\">二维码生成失败，请使用下方链接</p>';
     }
-  }, 100);
+  }, 150);
 }
 
 function renderListTab(eventId) {
@@ -931,43 +915,35 @@ function removeReg(eventId, regId) {
 }
 
 /* ========== 报名表单（用户端） ========== */
-function renderRegistrationForm(eventId) {
+function renderRegistrationForm(eventId, encodedData) {
   var data = loadData();
   var event = data.events.find(function(e) { return e.id === eventId; });
 
-  // 本地有数据，直接渲染
-  if (event) {
-    renderRegFormContent(event);
-    return;
+  // 本地没有活动数据，尝试从URL解码（跨设备扫码场景）
+  if (!event && encodedData) {
+    var decoded = decodeEventFromUrl(encodedData);
+    if (decoded && decoded.id === eventId) {
+      // 将活动配置写入本地存储，这样报名数据可以保存
+      event = decoded;
+      event.updatedAt = Date.now();
+      if (!data.events.find(function(e) { return e.id === eventId; })) {
+        data.events.push(event);
+        saveData(data);
+      }
+    }
   }
 
-  // 本地没有，从GitHub加载（跨设备扫码场景）
-  setHeader('加载中...', false);
-  setMain('<div class="empty-state"><div class="empty-icon">⏳</div><h3>正在加载活动信息...</h3></div>');
-
-  loadRemoteEvent(eventId).then(function(remoteEvent) {
-    if (remoteEvent) {
-      // 写入本地存储
-      var d = loadData();
-      if (!d.events.find(function(e) { return e.id === eventId; })) {
-        d.events.push(remoteEvent);
-        saveData(d);
-      }
-      renderRegFormContent(remoteEvent);
-    } else {
-      setHeader('活动不存在', false);
-      setMain(`
-        <div class="empty-state">
-          <div class="empty-icon">🔍</div>
-          <h3>活动不存在或已结束</h3>
-          <p>请联系活动主办方获取最新链接</p>
-        </div>
-      `);
-    }
-  });
-}
-
-function renderRegFormContent(event) {
+  if (!event) {
+    setHeader('活动不存在', false);
+    setMain(`
+      <div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <h3>活动不存在或已结束</h3>
+        <p>请联系活动主办方获取最新链接</p>
+      </div>
+    `);
+    return;
+  }
 
   const regs = getRegistrations(event.id);
   const isFull = event.maxRegs && regs.length >= event.maxRegs;
@@ -998,7 +974,7 @@ function renderRegFormContent(event) {
       <h3 style="font-size:18px;margin-bottom:4px;">📝 ${escHtml(event.title)}</h3>
       ${event.description ? `<p style="font-size:14px;color:var(--gray-500);margin-bottom:16px;">${escHtml(event.description)}</p>` : ''}
 
-      <form id="regForm" onsubmit="submitRegistration(event, '${event.id}')">
+      <form id="regForm" onsubmit="submitRegistration(event, '${eventId}')">
         ${event.fields.map(f => `
           <div class="form-group">
             <label class="form-label">
@@ -1181,58 +1157,8 @@ function toggleEventStatus(eventId) {
   event.status = event.status === 'open' ? 'closed' : 'open';
   event.updatedAt = Date.now();
   saveData(data);
-  syncEventToGithub(event);
   showToast(event.status === 'open' ? '活动已开启报名' : '活动已关闭报名', 'success');
   renderEventDetail(eventId);
-}
-
-function showTokenSettings() {
-  var currentToken = getGithubToken();
-  var html = `
-    <div class="modal-overlay" id="tokenModal" onclick="if(event.target===this)closeTokenModal()">
-      <div class="modal">
-        <h3>🔗 GitHub Token 设置</h3>
-        <p style="font-size:13px;color:var(--gray-500);margin-bottom:12px;">
-          配置后活动数据自动同步到GitHub，其他人扫码也能打开报名页，二维码也会更短。
-        </p>
-        <div class="form-group">
-          <label class="form-label">GitHub Personal Access Token</label>
-          <input class="form-input" id="tokenInput" type="password" placeholder="ghp_xxxxxxxxxxxx" value="${escAttr(currentToken)}">
-        </div>
-        <p style="font-size:11px;color:var(--gray-400);margin-bottom:12px;">
-          需要 <b>repo</b> 权限。在 <a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a> 创建
-        </p>
-        <div class="modal-actions">
-          <button class="btn btn-outline btn-sm" onclick="closeTokenModal()">取消</button>
-          <button class="btn btn-primary btn-sm" onclick="saveToken()">💾 保存</button>
-        </div>
-      </div>
-    </div>
-  `;
-  var div = document.createElement('div');
-  div.innerHTML = html;
-  document.body.appendChild(div.firstElementChild);
-}
-
-function closeTokenModal() {
-  var modal = document.getElementById('tokenModal');
-  if (modal) modal.remove();
-}
-
-function saveToken() {
-  var token = document.getElementById('tokenInput').value.trim();
-  setGithubToken(token);
-  closeTokenModal();
-  if (token) {
-    showToast('Token 已保存！现在创建活动会自动同步', 'success');
-    // 同步已有活动
-    var events = getEvents();
-    events.forEach(function(e) { syncEventToGithub(e); });
-    if (events.length > 0) showToast('正在后台同步 ' + events.length + ' 个已有活动...', 'info');
-  } else {
-    showToast('Token 已清除', 'info');
-  }
-  render();
 }
 
 function confirmDeleteEvent(eventId) {
