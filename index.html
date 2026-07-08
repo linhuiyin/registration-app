@@ -743,60 +743,8 @@ function renderEventDetail(eventId) {
 
   setHeader(event.title, true, '⚙️', () => navigate('create/' + event.id));
 
-  let html = `
-    <div class="stats-row">
-      <div class="stat-card">
-        <div class="stat-num">${regs.length}</div>
-        <div class="stat-label">已报名</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-num">${event.maxRegs || '∞'}</div>
-        <div class="stat-label">名额上限</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-num">${event.status === 'open' ? '✅' : '⛔'}</div>
-        <div class="stat-label">${event.status === 'open' ? '开放中' : '已关闭'}</div>
-      </div>
-    </div>
-
-    <div class="tab-bar" id="detailTabs">
-      <button class="active" onclick="switchDetailTab('qr', '${event.id}', this)">📱 报名码</button>
-      <button onclick="switchDetailTab('list', '${event.id}', this)">👥 报名列表</button>
-    </div>
-
-    <div id="detailContent"></div>
-  `;
-
-  setMain(html);
-  renderQRTab(event, regUrl);
-}
-
-function switchDetailTab(tab, eventId, btnEl) {
-  document.querySelectorAll('#detailTabs button').forEach(function(b) { b.classList.remove('active'); });
-  if (btnEl) btnEl.classList.add('active');
-
-  if (tab === 'qr') {
-    const data = loadData();
-    const event = data.events.find(e => e.id === eventId);
-    if (!event) return;
-    const encoded = encodeEventForUrl(event);
-    const regUrl = location.origin + location.pathname + '#register/' + eventId + '/' + encoded;
-    renderQRTab(event, regUrl);
-  } else {
-    renderListTab(eventId);
-  }
-}
-
-var qrGenTimer = null;
-
-function renderQRTab(event, regUrl) {
-  var content = document.getElementById('detailContent');
-  if (!content) return;
-
-  // 取消之前的QR生成，防止重复
-  if (qrGenTimer) { clearTimeout(qrGenTimer); qrGenTimer = null; }
-
-  var html = `
+  // 把二维码内联进来，只渲染一次
+  var qrHtml = `
     <div class="qr-section">
       <div class="qr-wrapper" id="qrcodeContainer">
         <div id="qrcode"></div>
@@ -823,14 +771,38 @@ function renderQRTab(event, regUrl) {
       </div>
     </div>
   `;
-  content.innerHTML = html;
 
-  // 生成二维码
-  qrGenTimer = setTimeout(function() {
-    qrGenTimer = null;
-    var qrContainer = document.getElementById('qrcode');
-    if (!qrContainer) return;
-    qrContainer.innerHTML = '';
+  let html = `
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-num">${regs.length}</div>
+        <div class="stat-label">已报名</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num">${event.maxRegs || '∞'}</div>
+        <div class="stat-label">名额上限</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num">${event.status === 'open' ? '✅' : '⛔'}</div>
+        <div class="stat-label">${event.status === 'open' ? '开放中' : '已关闭'}</div>
+      </div>
+    </div>
+
+    <div class="tab-bar" id="detailTabs">
+      <button class="active" onclick="switchTabContent('qr', '${event.id}', this)">📱 报名码</button>
+      <button onclick="switchTabContent('list', '${event.id}', this)">👥 报名列表</button>
+    </div>
+
+    <div id="detailContent">
+      ${qrHtml}
+    </div>
+  `;
+
+  setMain(html);
+
+  // 渲染二维码
+  var qrContainer = document.getElementById('qrcode');
+  if (qrContainer && qrContainer.children.length === 0) {
     try {
       var qrSize = regUrl.length > 500 ? 280 : 220;
       new QRCode(qrContainer, {
@@ -841,30 +813,74 @@ function renderQRTab(event, regUrl) {
         colorLight: '#ffffff',
         correctLevel: QRCode.CorrectLevel.L
       });
-    } catch(err) {
-      qrContainer.innerHTML = '<p style=\"color:red;font-size:13px;\">二维码生成失败，请使用下方链接</p>';
-    }
-  }, 150);
+    } catch(err) { /* QR failed silently */ }
+  }
 }
 
-function renderListTab(eventId) {
-  const regs = getRegistrations(eventId);
-  const data = loadData();
-  const event = data.events.find(e => e.id === eventId);
-  const content = document.getElementById('detailContent');
+function switchTabContent(tab, eventId, btnEl) {
+  document.querySelectorAll('#detailTabs button').forEach(function(b) { b.classList.remove('active'); });
+  if (btnEl) btnEl.classList.add('active');
 
-  if (regs.length === 0) {
+  var content = document.getElementById('detailContent');
+  if (!content) return;
+
+  if (tab === 'qr') {
+    var d = loadData();
+    var ev = d.events.find(function(e) { return e.id === eventId; });
+    if (!ev) return;
+    var encoded = encodeEventForUrl(ev);
+    var regUrl = location.origin + location.pathname + '#register/' + eventId + '/' + encoded;
+
     content.innerHTML = `
-      <div class="empty-state" style="padding:40px;">
-        <div class="empty-icon">📭</div>
-        <h3>暂无报名记录</h3>
-        <p>分享二维码或链接给参与者报名吧</p>
+      <div class="qr-section">
+        <div class="qr-wrapper" id="qrcodeContainer">
+          <div id="qrcode"></div>
+        </div>
+        <p style="font-size:14px;color:var(--gray-600);margin-bottom:8px;">
+          📱 用微信或其他扫码软件扫描二维码报名
+        </p>
+        <div class="qr-url">${regUrl}</div>
+        <div class="qr-actions">
+          <button class="btn btn-primary btn-sm" onclick="copyUrl('${regUrl}')">📋 复制链接</button>
+          <button class="btn btn-outline btn-sm" onclick="shareUrl('${regUrl}', '${escAttr(ev.title)}')">📤 分享</button>
+        </div>
+        <div style="margin-top:16px;font-size:13px;color:var(--gray-500);">
+          ${ev.status === 'open'
+            ? (ev.deadline ? '⏰ 报名截止：' + formatDate(ev.deadline) : '🟢 活动进行中，接受报名')
+            : '🔴 活动已关闭，不接受新报名'}
+          ${ev.maxRegs ? ' · 限额 ' + ev.maxRegs + ' 人' : ''}
+        </div>
+        <div class="btn-group" style="margin-top:20px;justify-content:center;">
+          <button class="btn btn-outline btn-sm" onclick="toggleEventStatus('${ev.id}')">
+            ${ev.status === 'open' ? '⏸️ 关闭报名' : '▶️ 开启报名'}
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDeleteEvent('${ev.id}')">🗑️ 删除活动</button>
+        </div>
       </div>
     `;
+    var qrEl = document.getElementById('qrcode');
+    if (qrEl && qrEl.children.length === 0) {
+      try {
+        var qrSize = regUrl.length > 500 ? 280 : 220;
+        new QRCode(qrEl, { text: regUrl, width: qrSize, height: qrSize, colorDark: '#1f2937', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.L });
+      } catch(err) {}
+    }
+  } else {
+    renderListTabContent(eventId, content);
+  }
+}
+
+function renderListTabContent(eventId, container) {
+  var regs = getRegistrations(eventId);
+  var d = loadData();
+  var ev = d.events.find(function(e) { return e.id === eventId; });
+
+  if (regs.length === 0) {
+    container.innerHTML = '<div class="empty-state" style="padding:40px;"><div class="empty-icon">📭</div><h3>暂无报名记录</h3><p>分享二维码或链接给参与者报名吧</p></div>';
     return;
   }
 
-  let html = `
+  var html = `
     <div class="search-bar">
       <input class="form-input" id="searchReg" placeholder="🔍 搜索报名记录..." oninput="filterRegs('${eventId}')">
       <button class="btn btn-outline btn-sm" onclick="exportCSV('${eventId}')">📥 导出</button>
@@ -872,23 +888,30 @@ function renderListTab(eventId) {
     <div id="regList">
   `;
 
-  regs.slice().reverse().forEach((reg, i) => {
+  regs.slice().reverse().forEach(function(reg, i) {
     html += `
       <div class="reg-list-item" data-search="${escAttr(JSON.stringify(reg.fields).toLowerCase())}">
         <div style="display:flex;justify-content:space-between;align-items:start;">
           <div style="flex:1;">
             <div class="reg-name">#${regs.length - i} ${escHtml(reg.fields[Object.keys(reg.fields)[0]] || '—')}</div>
-            <div class="reg-info">${formatRegInfo(reg.fields, event.fields)}</div>
+            <div class="reg-info">${formatRegInfo(reg.fields, ev.fields)}</div>
             <div class="reg-time">📅 ${formatDateTime(reg.createdAt)}</div>
           </div>
-          <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();removeReg('${eventId}','${reg.id}')" style="flex-shrink:0;">删除</button>
+          <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();removeRegItem('${eventId}','${reg.id}')" style="flex-shrink:0;">删除</button>
         </div>
       </div>
     `;
   });
 
   html += '</div>';
-  content.innerHTML = html;
+  container.innerHTML = html;
+}
+
+function removeRegItem(eventId, regId) {
+  if (!confirm('确定要删除这条报名记录吗？此操作不可恢复。')) return;
+  deleteRegistration(eventId, regId);
+  var c = document.getElementById('detailContent');
+  if (c) renderListTabContent(eventId, c);
 }
 
 function formatRegInfo(fields, eventFields) {
@@ -905,13 +928,6 @@ function filterRegs(eventId) {
     const searchData = item.getAttribute('data-search') || '';
     item.style.display = searchData.includes(query) ? '' : 'none';
   });
-}
-
-function removeReg(eventId, regId) {
-  if (!confirm('确定要删除这条报名记录吗？此操作不可恢复。')) return;
-  deleteRegistration(eventId, regId);
-  showToast('已删除', 'info');
-  renderListTab(eventId);
 }
 
 /* ========== 报名表单（用户端） ========== */
@@ -1148,7 +1164,7 @@ function exportCSV(eventId) {
 
 /* ========== 移除活动展示的函数暴露到全局 ========== */
 // Functions already defined above and accessible via onclick handlers
-// The renderListTab & renderEventDetail functions handle the list display
+// The renderListTabContent & renderEventDetail functions handle the list display
 
 function toggleEventStatus(eventId) {
   const data = loadData();
