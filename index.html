@@ -381,6 +381,30 @@ function deleteRegistration(eventId, regId) {
 
 function generateId() { return 'id_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6); }
 
+/* ========== 活动数据URL编解码（跨设备共享） ========== */
+function encodeEventForUrl(event) {
+  // 只把活动配置编码进URL，不包含报名数据
+  const config = {
+    id: event.id,
+    title: event.title,
+    description: event.description || '',
+    fields: event.fields,
+    deadline: event.deadline,
+    maxRegs: event.maxRegs,
+    status: event.status,
+    createdAt: event.createdAt,
+  };
+  try {
+    return btoa(encodeURIComponent(JSON.stringify(config)));
+  } catch { return ''; }
+}
+
+function decodeEventFromUrl(encoded) {
+  try {
+    return JSON.parse(decodeURIComponent(atob(encoded)));
+  } catch { return null; }
+}
+
 /* ========== Toast ========== */
 function showToast(msg, type = 'info') {
   const container = document.getElementById('toastContainer');
@@ -425,7 +449,7 @@ function render() {
     case 'home': renderHome(); break;
     case 'create': renderCreateForm(route.params[0]); break;
     case 'event': renderEventDetail(route.params[0]); break;
-    case 'register': renderRegistrationForm(route.params[0]); break;
+    case 'register': renderRegistrationForm(route.params[0], route.params[1]); break;
     case 'success': renderSuccessPage(); break;
     default: renderHome();
   }
@@ -665,7 +689,8 @@ function renderEventDetail(eventId) {
 
   const regs = getRegistrations(event.id);
   const isActive = !event.deadline || new Date(event.deadline) > new Date();
-  const regUrl = location.origin + location.pathname + '#register/' + event.id;
+  const encoded = encodeEventForUrl(event);
+  const regUrl = location.origin + location.pathname + '#register/' + event.id + '/' + encoded;
 
   setHeader(event.title, true, '⚙️', () => navigate('create/' + event.id));
 
@@ -704,7 +729,8 @@ function switchDetailTab(tab, eventId) {
   if (tab === 'qr') {
     const data = loadData();
     const event = data.events.find(e => e.id === eventId);
-    const regUrl = location.origin + location.pathname + '#register/' + eventId;
+    const encoded = encodeEventForUrl(event);
+    const regUrl = location.origin + location.pathname + '#register/' + eventId + '/' + encoded;
     renderQRTab(event, regUrl);
   } else {
     renderListTab(eventId);
@@ -827,9 +853,23 @@ function removeReg(eventId, regId) {
 }
 
 /* ========== 报名表单（用户端） ========== */
-function renderRegistrationForm(eventId) {
-  const data = loadData();
-  const event = data.events.find(e => e.id === eventId);
+function renderRegistrationForm(eventId, encodedData) {
+  var data = loadData();
+  var event = data.events.find(function(e) { return e.id === eventId; });
+
+  // 本地没有活动数据，尝试从URL解码（跨设备扫码场景）
+  if (!event && encodedData) {
+    var decoded = decodeEventFromUrl(encodedData);
+    if (decoded && decoded.id === eventId) {
+      // 将活动配置写入本地存储，这样报名数据可以保存
+      event = decoded;
+      event.updatedAt = Date.now();
+      if (!data.events.find(function(e) { return e.id === eventId; })) {
+        data.events.push(event);
+        saveData(data);
+      }
+    }
+  }
 
   if (!event) {
     setHeader('活动不存在', false);
