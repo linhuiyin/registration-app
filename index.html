@@ -323,7 +323,7 @@ main { flex: 1; padding: 16px; overflow-y: auto; }
 <div class="app" id="app">
   <header id="header"></header>
   <main id="main"></main>
-  <div class="app-footer">
+  <div class="app-footer" id="appFooter">
     报名助手 · 免费使用 ·
     <a href="#" onclick="navigate('home')">管理活动</a>
   </div>
@@ -411,6 +411,14 @@ window.addEventListener('load', () => { render(); });
 function render() {
   const route = getRoute();
   const app = document.getElementById('app');
+  const footer = document.getElementById('appFooter');
+
+  // 在报名页和成功页隐藏底部管理入口
+  if (route.page === 'register' || route.page === 'success') {
+    footer.style.display = 'none';
+  } else {
+    footer.style.display = '';
+  }
 
   // Update header & main based on route
   switch (route.page) {
